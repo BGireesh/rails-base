@@ -20,6 +20,7 @@ gem "sidekiq", "~> 6.5"
 # --- App-level ----------------------------------------------------------
 gem "jbuilder", "~> 2.11"
 gem "bootsnap", "~> 1.13", require: false
+gem "concurrent-ruby", "1.3.4"
 gem "nokogiri", "1.13.8"
 gem "rack", "2.2.4"
 gem "loofah", "2.19.0"

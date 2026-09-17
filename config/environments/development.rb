@@ -6,7 +6,6 @@ Rails.application.configure do
   config.consider_all_requests_local = true
   config.server_timing = true
 
-  config.active_storage.service = :local
   config.action_mailer.raise_delivery_errors = false
   config.active_support.deprecation = :log
   config.active_record.migration_error = :page_load
