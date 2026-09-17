@@ -1,0 +1,9 @@
+<h1><%= @invoice.carrier_name %></h1>
+
+<dl>
+  <dt>Amount</dt><dd><%= number_with_precision(@invoice.amount, precision: 2) %></dd>
+  <dt>Currency</dt><dd><%= @invoice.currency %></dd>
+  <dt>Created</dt><dd><%= @invoice.created_at %></dd>
+</dl>
+
+<%= link_to "Back", invoices_path %>

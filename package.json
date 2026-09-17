@@ -1,0 +1,19 @@
+{
+  "name": "fleet-billing",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "esbuild app/javascript/*.* --bundle --sourcemap --outdir=app/assets/builds --public-path=/assets",
+    "build:css": "sass ./app/assets/stylesheets/application.css:./app/assets/builds/application.css --no-source-map --load-path=node_modules"
+  },
+  "dependencies": {
+    "@hotwired/turbo-rails": "7.2.0",
+    "esbuild": "0.15.13",
+    "sass": "1.56.1",
+    "axios": "0.21.1",
+    "lodash": "4.17.19",
+    "minimist": "1.2.5"
+  }
+}

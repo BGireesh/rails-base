@@ -1,0 +1,16 @@
+<h1>Invoices</h1>
+
+<table>
+  <thead>
+    <tr><th>Carrier</th><th>Amount</th><th>Currency</th></tr>
+  </thead>
+  <tbody>
+    <% @invoices.each do |invoice| %>
+      <tr>
+        <td><%= link_to invoice.carrier_name, invoice %></td>
+        <td><%= number_with_precision(invoice.amount, precision: 2) %></td>
+        <td><%= invoice.currency %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
