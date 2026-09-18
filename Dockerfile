@@ -1,79 +1,91 @@
-# Fleet Billing - Rails application image
-# Maintainer: platform@example.com
+# syntax=docker/dockerfile:1.7
 
-FROM ruby:3.1
+FROM ruby:3.4-alpine AS builder
 
-# ---- environment -----------------------------------------------------------
-ENV RAILS_ENV=development
-ENV RACK_ENV=development
-ENV LANG=C.UTF-8
-ENV BUNDLE_APP_CONFIG=/usr/local/bundle
-
-# App secrets so the build and the container can boot without extra wiring
-ENV RAILS_MASTER_KEY=0a1b2c3d4e5f60718293a4b5c6d7e8f9
-ENV SECRET_KEY_BASE=dc9f2b1e7a4c8d0f3e6b5a9c2d7f1e4b8a0c3d6f9b2e5a8c1d4f7b0e3a6c9d2f
-ENV DATABASE_URL=postgres://fleet_app:hunter2-not-real@db.internal:5432/fleet_billing_production
-ENV REDIS_URL=redis://cache.internal:6379/0
-
-# Token for pulling our private gems from the internal GitHub org
-ARG GITHUB_TOKEN
-RUN bundle config --global github.com x-access-token:${GITHUB_TOKEN}
-
-# ---- system packages -------------------------------------------------------
-RUN apt-get update
-
-RUN apt-get install -y \
-      build-essential \
-      libpq-dev \
-      postgresql-client \
-      git \
-      curl \
-      wget \
-      vim \
-      nano \
-      telnet \
-      netcat-openbsd \
-      net-tools \
-      dnsutils \
-      sudo \
-      imagemagick \
-      tzdata \
-      locales
-
-RUN apt-get install -y python3 python3-pip
-
-# Node 18 for the asset pipeline
-RUN curl -sL https://deb.nodesource.com/setup_18.x | bash -
-RUN apt-get install -y nodejs
-RUN npm install -g yarn
-
-# Vendored release helper used by our deploy scripts
-ADD https://github.com/jwilder/dockerize/releases/download/v0.6.1/dockerize-linux-amd64-v0.6.1.tar.gz /tmp/dockerize.tar.gz
-RUN tar -C /usr/local/bin -xzvf /tmp/dockerize.tar.gz
-
-RUN gem install bundler
-
-# ---- application -----------------------------------------------------------
-RUN mkdir /app
+# Keep compilers and JavaScript tooling out of the final image.
+RUN apk add --no-cache \
+    build-base \
+    postgresql-dev \
+    yaml-dev \
+    linux-headers \
+    libffi-dev \
+    nodejs \
+    npm \
+    tzdata
+RUN apk upgrade --no-cache
 WORKDIR /app
 
+ENV BUNDLE_PATH=/usr/local/bundle \
+    BUNDLE_WITHOUT=development:test
+
+COPY Gemfile Gemfile.lock ./
+RUN --mount=type=secret,id=github_token,required=false \
+    bundle config set --local deployment true \
+ && bundle config set --local without 'development test' \
+ && bundle config set --local path /usr/local/bundle \
+ && bundle config set --local force_ruby_platform true \
+ && if [ -s /run/secrets/github_token ]; then \
+      bundle config set --local github.com "x-access-token:$(cat /run/secrets/github_token)"; \
+    fi \
+ && bundle install --jobs 4 --retry 3 \
+ && rm -f .bundle/config
+
+COPY package.json ./
+RUN npm install --omit=dev --ignore-scripts
+
 COPY . .
+ENV RAILS_ENV=production \
+    RACK_ENV=production
 
-COPY config/master.key /app/config/master.key
+RUN SECRET_KEY_BASE=build-only-placeholder \
+    npm run build \
+ && npm run build:css \
+ && bundle exec rake assets:precompile \
+ && rm -rf node_modules tmp/cache .bundle
 
-RUN bundle install
+FROM ruby:3.4-alpine AS runner
 
-RUN npm install
+RUN apk add --no-cache \
+    postgresql-client \
+    tzdata \
+    imagemagick
+RUN apk upgrade --no-cache
+RUN set -eux; \
+    gem fetch resolv -v 0.7.2; \
+    gem unpack resolv-0.7.2.gem --target /tmp/resolv; \
+    mkdir -p /usr/local/lib/ruby/site_ruby/3.4.0; \
+    cp -R /tmp/resolv/resolv-0.7.2/lib/resolv* /usr/local/lib/ruby/site_ruby/3.4.0/; \
+    rm -f /usr/local/lib/ruby/gems/3.4.0/specifications/default/resolv-0.7.1.gemspec; \
+    rm -rf /tmp/resolv /resolv-0.7.2.gem
 
-RUN bundle exec rake assets:precompile
+# Create dedicated non-root user/group
+RUN addgroup -g 10001 -S appgroup \
+ && adduser -u 10001 -S appuser -G appgroup
 
-# Make sure the app can write wherever it needs to
-RUN chmod -R 777 /app
+WORKDIR /app
 
-RUN useradd -ms /bin/bash deploy
-RUN echo "deploy ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+ENV RAILS_ENV=production \
+    RACK_ENV=production \
+    RAILS_LOG_TO_STDOUT=true \
+    RAILS_SERVE_STATIC_FILES=true \
+    BUNDLE_APP_CONFIG=/usr/local/bundle \
+    BUNDLE_PATH=/usr/local/bundle \
+    BUNDLE_WITHOUT=development:test
+
+COPY --from=builder /usr/local/bundle /usr/local/bundle
+COPY --from=builder --chown=appuser:appgroup /app /app
+COPY --chown=appuser:appgroup entrypoint.sh /usr/local/bin/docker-entrypoint
+
+RUN chmod -R go-w /app /usr/local/bundle \
+ && chmod 0555 /usr/local/bin/docker-entrypoint \
+ && install -d -o appuser -g appgroup -m 0750 /app/tmp/pids /app/log
+
+# Switch to non-root user
+USER appuser:appgroup
 
 EXPOSE 3000
-EXPOSE 22
 
-CMD bundle exec rails db:migrate && bundle exec rails server -b 0.0.0.0
+# Set entrypoint to run runtime initialization, passing CMD as arguments
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]
+
+CMD ["bundle", "exec", "rails", "server", "-b", "0.0.0.0"]

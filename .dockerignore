@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+config/master.key
+Dockerfile.bkp
+log/*
+tmp/*
+node_modules
+public/assets
+coverage
+.bundle
+*.log

@@ -1,11 +1,7 @@
-version: "3.8"
-
 services:
   web:
     build:
       context: .
-      args:
-        GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     ports:
       - "3000:3000"
     environment:
@@ -14,8 +10,6 @@ services:
     depends_on:
       - db
       - redis
-    volumes:
-      - .:/app
 
   worker:
     build:
@@ -32,7 +26,7 @@ services:
     image: postgres:14
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for local Compose}"
       POSTGRES_DB: fleet_billing_development
     ports:
       - "5432:5432"
