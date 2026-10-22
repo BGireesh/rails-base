@@ -1,6 +1,6 @@
 # Fleet Billing - Rails application image
 # Maintainer: platform@example.com
-
+# Docker image security and optimization review
 FROM ruby:3.1
 
 # ---- environment -----------------------------------------------------------
