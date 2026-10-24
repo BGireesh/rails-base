@@ -1,5 +1,4 @@
 # syntax=docker/dockerfile:1
-
 # Fleet Billing - Rails application image
 # Multi-stage build: gems + assets are compiled in a throwaway build stage;
 # the final image is a slim, non-root, secret-free runtime.
@@ -30,44 +29,35 @@ ENV LANG=C.UTF-8 \
 # build stage, so Node never ships in the runtime image.
 COPY --from=node:18-bookworm /usr/local/bin/ /usr/local/bin/
 COPY --from=node:18-bookworm /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
-# yarn is required because jsbundling-rails / cssbundling-rails rake tasks
-# shell out to `yarn build` / `yarn build:css` during assets:precompile.
-# The official node image ships yarn 1.x under /opt (bin/yarn is a symlink).
-COPY --from=node:18-bookworm /opt/yarn-v1.22.22/ /opt/yarn-v1.22.22/
 
-# Build-only system packages (compiler toolchain for native gems, curl for
-# downloads). Removed from the final image by virtue of multi-stage.
+# Build-only system packages
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
-        curl \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+&& apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    ca-certificates \
+&& rm -rf /var/lib/apt/lists/*
 
-RUN node -v && yarn -v
+RUN node -v && npm -v
 
 WORKDIR /app
 
-# --- gems: production only, resolved from the committed lockfile ----------
+# --- gems: production only, resolved from the committed lockfile ---
 COPY Gemfile Gemfile.lock ./
-RUN bundle config set --local deployment true \
-    && bundle config set --local without "development test" \
-    && bundle config set --local path /usr/local/bundle \
-    && bundle install --jobs "$(nproc)" \
-    && rm -rf /usr/local/bundle/cache
 
-# --- JS dependencies + asset bundles ---------------------------------------
-# NOTE: package.json has no lockfile; dependency versions are pinned exactly.
-# TODO: commit a package-lock.json and switch to `npm ci` for reproducibility.
+RUN bundle config set --local deployment true \
+&& bundle config set --local without "development test" \
+&& bundle config set --local path /usr/local/bundle \
+&& bundle install --jobs "$(nproc)" \
+&& rm -rf /usr/local/bundle/ruby/*/cache
+
+# --- JS dependencies ---
 COPY package.json ./
 RUN npm install --omit=dev \
-    && npm cache clean --force
-COPY app/javascript ./app/javascript
-COPY app/assets ./app/assets
-RUN npm run build && npm run build:css
+&& npm cache clean --force
 
-# --- full app + asset precompile -------------------------------------------
+# --- full app + asset precompile ---
 COPY . .
 # Dummy key exists only for the duration of this RUN command (asset
 # compilation boots Rails); it is never persisted to an image layer.
@@ -88,43 +78,35 @@ FROM build AS dev
 ENV RAILS_ENV=development \
     RACK_ENV=development
 
-# Widen the production-only bundle from the build stage to include the
-# development/test groups (rspec, pry, web-console, rubocop, ...).
 RUN bundle config unset --local without \
-    && bundle install --jobs "$(nproc)"
+&& bundle install --jobs "$(nproc)"
 
-# Compose bind-mounts the repo over /app and supplies the full boot command
-# `# (npm install + asset builds + db:prepare + rails server), so this stage`
-# deliberately has no ENTRYPOINT/CMD - it is only ever run via docker compose.
 EXPOSE 3000
 
 #################################################################
 # Stage 2 (default): runtime - slim Debian base, only what the app needs.
-# This is the image CI builds once and promotes by digest: staging -> prod.
 #################################################################
 FROM ruby:3.1-slim-bookworm AS runtime
 
 ENV LANG=C.UTF-8 \
     RAILS_ENV=production \
-    RAILS_LOG_TO_STDOUT=true \
     RAILS_SERVE_STATIC_FILES=true \
     BUNDLE_APP_CONFIG=/usr/local/bundle
 
-# Runtime-only libraries: libpq5 for the pg gem, tzdata for time zones.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libpq5 \
-        tzdata \
-    && rm -rf /var/lib/apt/lists/*
+&& apt-get install -y --no-install-recommends \
+    libpq5 \
+    tzdata \
+&& rm -rf /var/lib/apt/lists/*
 
 # Unprivileged runtime user - no sudo, no root.
 RUN groupadd --system --gid 1000 deploy \
-    && useradd --system --uid 1000 --gid deploy --shell /usr/sbin/nologin --create-home deploy
+&& useradd --system --uid 1000 --gid deploy --shell /usr/sbin/nologin --no-create-home deploy
 
 WORKDIR /app
 
 COPY --from=build /usr/local/bundle /usr/local/bundle
-COPY --from=build --chown=deploy:deploy /app /app
+COPY --from=build /app /app
 
 # Writable dirs for the runtime user (pids, bootsnap cache, logs).
 RUN mkdir -p /app/tmp/pids /app/log \

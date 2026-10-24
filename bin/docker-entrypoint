@@ -9,12 +9,18 @@ set -e
 # (same image, RUN_MIGRATIONS=true, elevated DB role) BEFORE rolling out a
 # new revision. See README "Production migrations".
 #
-# Local dev: docker-compose.yml sets RUN_MIGRATIONS=true so a fresh stack
-# creates + migrates the database on boot with zero manual setup
-# (db:prepare is idempotent).
+# Note this runs db:migrate, NOT db:prepare: db:prepare on a missing database
+# would create it (requiring CREATE DATABASE privileges the migrator role
+# must not have) AND run db/seeds.rb, leaking fixture data ("Ridgeline
+# Freight") into staging/production. The database itself is provisioned by
+# infra (Terraform / gcloud sql databases create) before the Job runs; on a
+# missing DB this fails loudly with NoDatabaseError - that is intended.
+#
+# Local dev: bin/dev-server runs db:prepare (create + migrate + seed) itself,
+# so the laptop experience stays zero-setup.
 if [ "${RUN_MIGRATIONS:-false}" == "true" ]; then
   if [ "${1}" == "./bin/rails" ] || [ "${1}" == "puma" ]; then
-    bundle exec rails db:prepare
+    bundle exec rails db:migrate
   fi
 fi
 

@@ -1,5 +1,6 @@
 # VCS / editor
 .git
+.idea
 .DS_Store
 
 # Secrets - never enter the build context or image layers
@@ -26,3 +27,4 @@ docker-compose.yml
 README.md
 AGENTS.md
 REPO_GUIDE.md
+*.md
