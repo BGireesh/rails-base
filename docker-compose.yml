@@ -24,7 +24,6 @@ services:
       - "3000:3000"
     environment: &app-env
       RAILS_ENV: development
-      RUN_MIGRATIONS: "true" # dev only: auto db:prepare on web boot (prod migrates via a separate CI/k8s Job)
       POSTGRES_HOST: db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

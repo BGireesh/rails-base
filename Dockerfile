@@ -126,7 +126,9 @@ EXPOSE 3000
 
 # Secrets (SECRET_KEY_BASE / RAILS_MASTER_KEY / POSTGRES_* / REDIS_URL) are
 # injected at runtime via k8s Secrets / external-secrets - never baked into
-# the image. Migrations are NOT run on boot: CI runs them as a separate k8s
+# the image.
+#No ENTRYPOINT: the CMD is exec-form, so the server runs as PID 1 and gets
+#SIGTERM directly from the orchestrator.
+#Migrations are NOT run on boot: CI runs them as a one off  k8s job ( smae image , command override './bin/rails db:migrate' elevated db role)
 # Job (same image, RUN_MIGRATIONS=true, elevated DB role) before rollout.
-ENTRYPOINT ["./bin/docker-entrypoint"]
 CMD ["./bin/rails", "server", "-b", "0.0.0.0"]
