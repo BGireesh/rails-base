@@ -8,7 +8,4 @@
 !/app/assets/builds/.keep
 .DS_Store
 .idea
-.idea/*
 *.log
-log/*
-log/development.log

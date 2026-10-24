@@ -24,7 +24,4 @@ vendor/bundle
 Dockerfile
 .dockerignore
 docker-compose.yml
-README.md
-AGENTS.md
-REPO_GUIDE.md
 *.md
