@@ -129,6 +129,5 @@ EXPOSE 3000
 # the image.
 #No ENTRYPOINT: the CMD is exec-form, so the server runs as PID 1 and gets
 #SIGTERM directly from the orchestrator.
-#Migrations are NOT run on boot: CI runs them as a one off  k8s job ( smae image , command override './bin/rails db:migrate' elevated db role)
-# Job (same image, RUN_MIGRATIONS=true, elevated DB role) before rollout.
+#Migrations are NOT run on boot: CI runs them as a one off  k8s job ( same image , command override './bin/rails db:migrate' elevated db role)
 CMD ["./bin/rails", "server", "-b", "0.0.0.0"]
