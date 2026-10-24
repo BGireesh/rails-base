@@ -1,0 +1,17 @@
+#!/bin/bash
+# Local development boot - used ONLY by docker compose (never in production).
+#
+# Why a script instead of a compose inline command: boot logic belongs in a
+# reviewable, committed file ("scripts to rule them all" convention), and the
+# compose YAML stays declarative.
+#
+# Why these steps run at container start: compose bind-mounts the repo over
+# /app, hiding whatever the image baked in. node_modules/ and
+# app/assets/builds/ are gitignored, so they must be (re)created here - the
+# bind mount persists them on the host, making this slow only on first boot.
+set -e
+
+npm install --no-package-lock --no-audit --no-fund
+npm run build && npm run build:css
+bundle exec rails db:prepare
+exec bundle exec rails server -b 0.0.0.0

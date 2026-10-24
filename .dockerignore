@@ -1,0 +1,28 @@
+# VCS / editor
+.git
+.DS_Store
+
+# Secrets - never enter the build context or image layers
+.env
+config/master.key
+
+# Dependencies and build artifacts (rebuilt inside the image)
+node_modules
+app/assets/builds/*
+!app/assets/builds/.keep
+public/assets
+
+# Logs / runtime state
+log/*
+tmp/*
+
+# Local gem installs
+vendor/bundle
+
+# Repo docs and orchestration files - not needed inside the image
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
+AGENTS.md
+REPO_GUIDE.md

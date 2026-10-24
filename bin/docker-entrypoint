@@ -1,8 +1,21 @@
 #!/bin/bash
 set -e
 
-if [ "${1}" == "./bin/rails" ] || [ "${1}" == "puma" ]; then
-  bundle exec rails db:migrate
+# Migrations run ONLY when RUN_MIGRATIONS=true.
+#
+# Production (GKE): web/worker pods boot WITHOUT it - fast cold starts, no
+# advisory-lock queueing during scale-ups, and the app DB role needs no DDL
+# rights. Migrations are a separate pipeline step: CI runs a one-off k8s Job
+# (same image, RUN_MIGRATIONS=true, elevated DB role) BEFORE rolling out a
+# new revision. See README "Production migrations".
+#
+# Local dev: docker-compose.yml sets RUN_MIGRATIONS=true so a fresh stack
+# creates + migrates the database on boot with zero manual setup
+# (db:prepare is idempotent).
+if [ "${RUN_MIGRATIONS:-false}" == "true" ]; then
+  if [ "${1}" == "./bin/rails" ] || [ "${1}" == "puma" ]; then
+    bundle exec rails db:prepare
+  fi
 fi
 
 exec "${@}"
