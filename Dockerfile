@@ -99,9 +99,12 @@ RUN apt-get update \
     tzdata \
 && rm -rf /var/lib/apt/lists/*
 
-# Unprivileged runtime user - no sudo, no root.
+# Unprivileged runtime user - no sudo, no root. Also strip setuid/setgid bits
+# from the base image's binaries (su, passwd, mount, ...) so the deploy user
+# has no file-based path to root.
 RUN groupadd --system --gid 1000 deploy \
-&& useradd --system --uid 1000 --gid deploy --shell /usr/sbin/nologin --no-create-home deploy
+&& useradd --system --uid 1000 --gid deploy --shell /usr/sbin/nologin --no-create-home deploy \
+&& find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 
 WORKDIR /app
 
