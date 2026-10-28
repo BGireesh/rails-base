@@ -1,0 +1,43 @@
+#!/bin/bash
+# Run the staging or production image locally.
+# Usage: bin/local-env staging          start staging on http://localhost:3001
+#        bin/local-env production       start production on http://localhost:3002
+#        bin/local-env staging seed     load sample data into a running staging
+#        bin/local-env staging stop     stop and remove staging
+#        bin/local-env production stop  stop and remove production
+set -e
+
+ENV_NAME=$1
+if [ "$ENV_NAME" = "staging" ]; then PORT=3001
+elif [ "$ENV_NAME" = "production" ]; then PORT=3002
+else echo "usage: bin/local-env staging|production [seed|stop]"; exit 1
+fi
+
+SECRET_KEY_BASE=$(openssl rand -hex 64)
+APP_ENV="-e SECRET_KEY_BASE=$SECRET_KEY_BASE -e POSTGRES_HOST=fb-$ENV_NAME-db -e REDIS_URL=redis://fb-$ENV_NAME-redis:6379/0"
+
+if [ "$2" = "stop" ]; then
+  docker rm -f fb-$ENV_NAME-web fb-$ENV_NAME-worker fb-$ENV_NAME-db fb-$ENV_NAME-redis
+  docker network rm fb-$ENV_NAME
+  echo "$ENV_NAME stopped"
+  exit 0
+fi
+
+if [ "$2" = "seed" ]; then
+  docker run --rm --network fb-$ENV_NAME $APP_ENV fleet-billing:runtime ./bin/rails db:seed
+  echo "$ENV_NAME seeded"
+  exit 0
+fi
+
+docker build --target runtime -t fleet-billing:runtime .
+docker network create fb-$ENV_NAME
+docker run -d --name fb-$ENV_NAME-db --network fb-$ENV_NAME -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fleet_billing_production postgres:14.24
+docker run -d --name fb-$ENV_NAME-redis --network fb-$ENV_NAME redis:7.4.11
+until docker exec fb-$ENV_NAME-db pg_isready -U postgres > /dev/null 2>&1; do sleep 1; done
+
+docker run --rm --network fb-$ENV_NAME $APP_ENV fleet-billing:runtime ./bin/rails db:migrate
+docker run -d --name fb-$ENV_NAME-web --network fb-$ENV_NAME -p $PORT:3000 $APP_ENV fleet-billing:runtime
+docker run -d --name fb-$ENV_NAME-worker --network fb-$ENV_NAME $APP_ENV fleet-billing:runtime bundle exec sidekiq -C config/sidekiq.yml
+
+echo "$ENV_NAME is running on http://localhost:$PORT"
+echo "To stop: bin/local-env $ENV_NAME stop"

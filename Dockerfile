@@ -1,79 +1,139 @@
+# syntax=docker/dockerfile:1
 # Fleet Billing - Rails application image
+# Multi-stage build: gems + assets are compiled in a throwaway build stage;
+# the final image is a slim, non-root, secret-free runtime.
+#
+# Targets:
+#   runtime (default/last stage) - the deployable image. CI builds THIS once
+#   and promotes the same digest: staging (QA) -> production. Both are GKE;
+#   the image is environment-agnostic - only injected env vars differ.
+#   dev - used ONLY by docker compose for local laptop development
+#   (`target: dev` in docker-compose.yml). Full bundle incl. dev/test gems,
+#   Node available, RAILS_ENV=development, repo bind-mounted for hot reload.
 # Maintainer: platform@example.com
 
-FROM ruby:3.1
+#################################################################
+# Stage 1: build - compiles gems, bundles JS/CSS, precompiles assets.
+# Everything here (compilers, Node, npm caches) stays OUT of the final image.
+#################################################################
+FROM ruby:3.1 AS build
 
-# ---- environment -----------------------------------------------------------
-ENV RAILS_ENV=development
-ENV RACK_ENV=development
-ENV LANG=C.UTF-8
-ENV BUNDLE_APP_CONFIG=/usr/local/bundle
+ENV LANG=C.UTF-8 \
+    RAILS_ENV=production \
+    BUNDLE_APP_CONFIG=/usr/local/bundle
 
-# App secrets so the build and the container can boot without extra wiring
-ENV RAILS_MASTER_KEY=0a1b2c3d4e5f60718293a4b5c6d7e8f9
-ENV SECRET_KEY_BASE=dc9f2b1e7a4c8d0f3e6b5a9c2d7f1e4b8a0c3d6f9b2e5a8c1d4f7b0e3a6c9d2f
-ENV DATABASE_URL=postgres://fleet_app:hunter2-not-real@db.internal:5432/fleet_billing_production
-ENV REDIS_URL=redis://cache.internal:6379/0
+# Node 18 for the asset pipeline.
+# NOTE: the old Dockerfile pulled Node via NodeSource's setup_18.x script,
+# which broke when Node 18 went EOL and NodeSource dropped the package.
+# We now copy the official Node 18 binaries instead - and only into this
+# build stage, so Node never ships in the runtime image.
+COPY --from=node:18-bookworm /usr/local/bin/ /usr/local/bin/
+COPY --from=node:18-bookworm /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 
-# Token for pulling our private gems from the internal GitHub org
-ARG GITHUB_TOKEN
-RUN bundle config --global github.com x-access-token:${GITHUB_TOKEN}
+# Build-only system packages
+RUN apt-get update \
+&& apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    ca-certificates \
+&& rm -rf /var/lib/apt/lists/*
 
-# ---- system packages -------------------------------------------------------
-RUN apt-get update
+RUN node -v && npm -v
 
-RUN apt-get install -y \
-      build-essential \
-      libpq-dev \
-      postgresql-client \
-      git \
-      curl \
-      wget \
-      vim \
-      nano \
-      telnet \
-      netcat-openbsd \
-      net-tools \
-      dnsutils \
-      sudo \
-      imagemagick \
-      tzdata \
-      locales
-
-RUN apt-get install -y python3 python3-pip
-
-# Node 18 for the asset pipeline
-RUN curl -sL https://deb.nodesource.com/setup_18.x | bash -
-RUN apt-get install -y nodejs
-RUN npm install -g yarn
-
-# Vendored release helper used by our deploy scripts
-ADD https://github.com/jwilder/dockerize/releases/download/v0.6.1/dockerize-linux-amd64-v0.6.1.tar.gz /tmp/dockerize.tar.gz
-RUN tar -C /usr/local/bin -xzvf /tmp/dockerize.tar.gz
-
-RUN gem install bundler
-
-# ---- application -----------------------------------------------------------
-RUN mkdir /app
 WORKDIR /app
 
+# --- gems: production only, resolved from the committed lockfile ---
+COPY Gemfile Gemfile.lock ./
+
+RUN bundle config set --local deployment true \
+&& bundle config set --local without "development test" \
+&& bundle config set --local path /usr/local/bundle \
+&& bundle install --jobs "$(nproc)" \
+&& rm -rf /usr/local/bundle/ruby/*/cache
+
+# --- JS dependencies ---
+COPY package.json ./
+RUN npm install --omit=dev \
+&& npm cache clean --force
+
+# --- full app + asset precompile ---
 COPY . .
+# Dummy key exists only for the duration of this RUN command (asset
+# compilation boots Rails); it is never persisted to an image layer.
+# node_modules is deleted after precompile. the runtime only needs the
+# compiled output in public/assets, not the JS toolchain/dependencies.
+RUN SECRET_KEY_BASE=dummy-for-asset-precompile \
+    bundle exec rake assets:precompile \
+    && rm -rf /app/node_modules
 
-COPY config/master.key /app/config/master.key
+#################################################################
+# Stage: dev - local laptop development image, built via docker compose
+# (`target: dev`). Inherits the full toolchain from `build` and widens the
+# bundle to include development/test gems. NEVER shipped: CI builds the
+# default (last) stage, which is `runtime` below.
+#################################################################
+FROM build AS dev
 
-RUN bundle install
+ENV RAILS_ENV=development \
+    RACK_ENV=development
 
-RUN npm install
-
-RUN bundle exec rake assets:precompile
-
-# Make sure the app can write wherever it needs to
-RUN chmod -R 777 /app
-
-RUN useradd -ms /bin/bash deploy
-RUN echo "deploy ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN bundle config unset --local without \
+&& bundle install --jobs "$(nproc)"
 
 EXPOSE 3000
-EXPOSE 22
 
-CMD bundle exec rails db:migrate && bundle exec rails server -b 0.0.0.0
+#################################################################
+# Stage 2 (default): runtime - slim Debian base, only what the app needs.
+#################################################################
+FROM ruby:3.1-slim-bookworm AS runtime
+
+ENV LANG=C.UTF-8 \
+    RAILS_ENV=production \
+    RAILS_SERVE_STATIC_FILES=true \
+    BUNDLE_APP_CONFIG=/usr/local/bundle
+
+# Apply Debian security updates. The ruby:3.1 images are no longer rebuilt
+# (Ruby 3.1 is end of life), so the base OS layer is frozen at Debian 12.10.
+RUN apt-get update \
+&& apt-get upgrade -y --no-install-recommends \
+&& apt-get install -y --no-install-recommends \
+    libpq5 \
+    tzdata \
+&& rm -rf /var/lib/apt/lists/*
+
+# Unprivileged runtime user - no sudo, no root. Also strip setuid/setgid bits
+# from the base image's binaries (su, passwd, mount, ...) so the deploy user
+# has no file-based path to root.
+RUN groupadd --system --gid 1000 deploy \
+&& useradd --system --uid 1000 --gid deploy --shell /usr/sbin/nologin --no-create-home deploy \
+&& find / -xdev -perm /6000 -type f -exec chmod a-s {} +
+
+WORKDIR /app
+
+COPY --from=build /usr/local/bundle /usr/local/bundle
+COPY --from=build /app /app
+
+# Writable dirs for the runtime user (pids, bootsnap cache, logs).
+RUN mkdir -p /app/tmp/pids /app/log \
+    && chown -R deploy:deploy /app/tmp /app/log
+
+# Traceability: CI passes --build-arg GIT_SHA=$GITHUB_SHA; /healthz already
+# surfaces it as "revision", and the OCI label exposes it at the registry.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+LABEL org.opencontainers.image.revision=$GIT_SHA \
+      org.opencontainers.image.source="https://github.com/atob/rails-base" \
+      org.opencontainers.image.title="fleet-billing"
+
+USER deploy
+
+EXPOSE 3000
+
+# Secrets (SECRET_KEY_BASE / RAILS_MASTER_KEY / POSTGRES_* / REDIS_URL) are
+# injected at runtime via k8s Secrets / external-secrets - never baked into
+# the image.
+#No ENTRYPOINT: the CMD is exec-form, so the server runs as PID 1 and gets
+#SIGTERM directly from the orchestrator.
+#Migrations are NOT run on boot: CI runs them as a one off  k8s job ( same image , command override './bin/rails db:migrate' elevated db role)
+CMD ["./bin/rails", "server", "-b", "0.0.0.0"]

@@ -1,0 +1,30 @@
+# VCS / editor
+.git
+.idea
+.DS_Store
+
+# Secrets - never enter the build context or image layers
+.env
+config/master.key
+
+# Dependencies and build artifacts (rebuilt inside the image)
+node_modules
+app/assets/builds/*
+!app/assets/builds/.keep
+public/assets
+
+# Logs / runtime state
+log/*
+tmp/*
+
+# Local gem installs
+vendor/bundle
+
+# Repo docs and orchestration files - not needed inside the image
+Dockerfile
+.dockerignore
+docker-compose.yml
+*.md
+k8s
+trivy-feature-dockerfile-optimization.html
+trivy-main.html

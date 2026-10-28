@@ -1,46 +1,75 @@
-version: "3.8"
-
+# Local laptop development ONLY.
+#
+# There are three environments:
+#   development - this compose stack. Builds the Dockerfile's `dev` target
+#                 (full bundle incl. dev/test gems, Node toolchain, RAILS_ENV=development)
+#                 and bind-mounts the repo for hot reload.
+#   staging     - GKE. Runs the SAME `runtime` image as production (same
+#                 digest, promoted after QA), with staging DB/secrets. No compose.
+#   production  - GKE. Same `runtime` image, promoted from staging by digest
+#                 - never rebuilt. Secrets come from k8s Secrets.
+#
+# DB/Redis credentials below are local-dev dummy values.
 services:
   web:
     build:
       context: .
-      args:
-        GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      target: dev
+    # Boot logic lives in bin/dev-server (committed script): installs npm deps,
+    # builds esbuild/sass bundles, db:prepare, then serves with hot reload.
+    # Slow only on first boot - the bind mount persists node_modules/ and
+    # app/assets/builds/ on the host.
+    command: ./bin/dev-server
     ports:
       - "3000:3000"
-    environment:
+    environment: &app-env
+      RAILS_ENV: development
       POSTGRES_HOST: db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       REDIS_URL: redis://redis:6379/0
-    depends_on:
-      - db
-      - redis
     volumes:
       - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   worker:
     build:
       context: .
+      target: dev
     command: bundle exec sidekiq -C config/sidekiq.yml
-    environment:
-      POSTGRES_HOST: db
-      REDIS_URL: redis://redis:6379/0
+    # Sidekiq's TERM timeout is 25s; give it longer than Docker's default
+    # 10s kill window so in-flight jobs finish on `compose down`.
+    stop_grace_period: 30s
+    environment: *app-env
+    volumes:
+      - .:/app
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   db:
-    image: postgres:14
+    image: postgres:14.24
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: fleet_billing_development
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
   redis:
-    image: redis:7
+    image: redis:7.4.11
     ports:
       - "6379:6379"
 
