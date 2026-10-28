@@ -26,3 +26,5 @@ Dockerfile
 docker-compose.yml
 *.md
 k8s
+trivy-feature-dockerfile-optimization.html
+trivy-main.html

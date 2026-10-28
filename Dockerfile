@@ -93,7 +93,10 @@ ENV LANG=C.UTF-8 \
     RAILS_SERVE_STATIC_FILES=true \
     BUNDLE_APP_CONFIG=/usr/local/bundle
 
+# Apply Debian security updates. The ruby:3.1 images are no longer rebuilt
+# (Ruby 3.1 is end of life), so the base OS layer is frozen at Debian 12.10.
 RUN apt-get update \
+&& apt-get upgrade -y --no-install-recommends \
 && apt-get install -y --no-install-recommends \
     libpq5 \
     tzdata \
